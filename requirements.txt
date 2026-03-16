@@ -1,0 +1,11 @@
+sentence-transformers
+python-docx
+pandas
+numpy
+torch
+fastapi
+uvicorn
+sentence-transformers
+numpy
+python-docx
+requests
