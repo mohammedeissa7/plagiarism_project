@@ -1,0 +1,18 @@
+version: "3.9"
+services:
+  plagiarism-api:
+    build:
+      context: .                     # folder containing Dockerfile
+      dockerfile: Dockerfile
+      args:
+        MODEL_NAME: all-MiniLM-L6-v2 # change to swap embedding model
+    container_name: plagiarism_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000" 
+    volumes:
+      - .:/app
+    environment:
+      PORT: "8000"
+      MODEL_NAME: "all-MiniLM-L6-v2"
+

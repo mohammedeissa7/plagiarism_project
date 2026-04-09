@@ -1,11 +1,8 @@
-sentence-transformers
-python-docx
+sentence-transformers==3.3.1
+python-docx==1.1.2
 pandas
 numpy
-torch
 fastapi
-uvicorn
-sentence-transformers
-numpy
-python-docx
+uvicorn[standard]
+python-multipart
 requests
