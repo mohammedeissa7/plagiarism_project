@@ -1,18 +1,54 @@
-version: "3.9"
 services:
-  plagiarism-api:
-    build:
-      context: .                     # folder containing Dockerfile
-      dockerfile: Dockerfile
-      args:
-        MODEL_NAME: all-MiniLM-L6-v2 # change to swap embedding model
-    container_name: plagiarism_api
+  app:
+    image: mahmoud403/sams-app:latest
+    container_name: sams-app
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    depends_on:
+      - mongodb
+      - redis
+    restart: unless-stopped
+    networks:
+      - sams-net
+
+  mongodb:
+    image: mongo
+    container_name: sams-mongodb
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo:/data/db
+    env_file:
+      - .env
+    networks:
+      - sams-net
+
+  redis:
+    image: redis:alpine
+    container_name: sams-redis
     restart: unless-stopped
     ports:
-      - "8000:8000" 
+      - '6379:6379'
     volumes:
-      - .:/app
+      - redis-data:/data
+    networks:
+      - sams-net
+  fastapi:
+    build: .
+    ports:
+      - "8000:8000"
     environment:
-      PORT: "8000"
-      MODEL_NAME: "all-MiniLM-L6-v2"
+      - WEBHOOK_URL=http://nestjs:3000/api/v1/similarity/webhook
+    networks:
+      - sams-net
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
 
+volumes:
+  mongo: { }
+  redis-data: { }
+
+networks:
+  sams-net:
+    driver: bridge

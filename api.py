@@ -1,118 +1,140 @@
 import os
-import tempfile
-import shutil
+import asyncio
 from typing import List
-
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-
+from fastapi import FastAPI, BackgroundTasks, HTTPException, status
+from pydantic import BaseModel
+import httpx
 from run import PlagiarismChecker
 
-app = FastAPI(
-    title="Plagiarism Checker API",
-    description="Upload .docx files and receive a pairwise cosine-similarity matrix (%).",
-    version="1.0.0",
-)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Load model once at startup (downloads on first run)
-checker: PlagiarismChecker | None = None
+app = FastAPI()
+checker = PlagiarismChecker()
 
 
-@app.on_event("startup")
-async def load_model():
-    global checker
-    print("[*] Loading sentence-transformer model …")
-    checker = PlagiarismChecker(model_name=os.getenv("MODEL_NAME", "all-MiniLM-L6-v2"))
-    print("[+] Model ready.")
+class Submission(BaseModel):
+    studentId: str
+    submissionId: str
+    fileUrl: str
 
 
-# ──────────────────────────────────────────────
-# POST /check
-# Body: multipart/form-data  →  files: List[UploadFile]
-# ──────────────────────────────────────────────
-@app.post(
-    "/",
-    summary="Run plagiarism check on uploaded .docx files",
-    response_description="Pairwise similarity matrix in percent",
-)
-async def check_plagiarism(files: List[UploadFile] = File(...)):
-    """
-    Accepts **two or more** `.docx` files and returns:
+class CheckRequest(BaseModel):
+    assignmentId: str
+    submissions: List[Submission]
 
-    ```json
-    {
-      "files": ["a.docx", "b.docx"],
-      "matrix": [[100.0, 72.4], [72.4, 100.0]]
-    }
-    ```
 
-    - `files` — ordered list of uploaded file names
-    - `matrix[i][j]` — similarity (%) between file *i* and file *j*
-    """
-    if len(files) < 2:
-        raise HTTPException(
-            status_code=422,
-            detail="At least 2 .docx files are required for comparison.",
-        )
+class Match(BaseModel):
+    comparedWithStudent: str
+    comparedWithSubmission: str
+    similarityPercentage: float
 
-    non_docx = [f.filename for f in files if not f.filename.lower().endswith(".docx")]
-    if non_docx:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Only .docx files are accepted. Rejected: {non_docx}",
-        )
 
-    # Save uploads to a temp directory so run.py helpers can read them
-    tmp_dir = tempfile.mkdtemp(prefix="plagiarism_")
+class Result(BaseModel):
+    studentId: str
+    submissionId: str
+    matches: List[Match]
+
+
+class WebhookResponse(BaseModel):
+    assignmentId: str
+    hasError: bool
+    errorMessage: str = ""
+    results: List[Result] = []
+
+
+async def download_file(url: str, dest: str):
+    """Download file from URL to local path"""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        with open(dest, 'wb') as f:
+            f.write(response.content)
+
+
+async def process_plagiarism(assignment_id: str, submissions: List[Submission], webhook_url: str):
+    """Background task: download files, check plagiarism, send webhook"""
+    temp_dir = f"/tmp/plag_{assignment_id}"
+    os.makedirs(temp_dir, exist_ok=True)
+    
     try:
-        file_names: List[str] = []
-        texts: List[str] = []
-
-        for upload in files:
-            dest = os.path.join(tmp_dir, upload.filename)
-            with open(dest, "wb") as fh:
-                shutil.copyfileobj(upload.file, fh)
-            file_names.append(upload.filename)
-            texts.append(checker.read_docx(dest))
-
-        matrix_np = checker.compute_similarity_matrix(texts)
-        matrix_list = matrix_np.tolist()
-
-        return JSONResponse(
-            content={
-                "files": file_names,
-                "matrix": matrix_list,
-
-                "high_similarity_pairs": _high_pairs(file_names, matrix_list, threshold=80.0),
-            }
+        # Download all files
+        file_paths = []
+        for sub in submissions:
+            filename = f"{sub.studentId}_{sub.submissionId}.docx"
+            filepath = os.path.join(temp_dir, filename)
+            await download_file(sub.fileUrl, filepath)
+            file_paths.append((sub, filepath))
+        
+        # Extract text from all files
+        texts = []
+        sub_map = []
+        for sub, fpath in file_paths:
+            text = checker.read_docx(fpath)
+            texts.append(text)
+            sub_map.append(sub)
+        
+        # Compute similarity matrix
+        matrix = checker.compute_similarity_matrix(texts)
+        
+        # Build results
+        results = []
+        n = len(submissions)
+        for i in range(n):
+            matches = []
+            for j in range(n):
+                if i != j and matrix[i][j] > 0:  # Skip self-comparison and zeros
+                    matches.append(Match(
+                        comparedWithStudent=sub_map[j].studentId,
+                        comparedWithSubmission=sub_map[j].submissionId,
+                        similarityPercentage=round(matrix[i][j], 1)
+                    ))
+            
+            results.append(Result(
+                studentId=sub_map[i].studentId,
+                submissionId=sub_map[i].submissionId,
+                matches=matches
+            ))
+        
+        # Send success webhook
+        webhook_data = WebhookResponse(
+            assignmentId=assignment_id,
+            hasError=False,
+            results=results
         )
-
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        
+    except Exception as e:
+        # Send error webhook
+        webhook_data = WebhookResponse(
+            assignmentId=assignment_id,
+            hasError=True,
+            errorMessage=str(e)
+        )
+    
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        # Cleanup temp files
+        import shutil
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+    
+    # Send webhook
+    async with httpx.AsyncClient() as client:
+        await client.post(webhook_url, json=webhook_data.dict())
 
 
-def _high_pairs(names: List[str], matrix: List[List[float]], threshold: float):
-    """Return pairs whose similarity exceeds `threshold` (excluding diagonal)."""
-    pairs = []
-    n = len(names)
-    for i in range(n):
-        for j in range(i + 1, n):
-            score = matrix[i][j]
-            if score >= threshold:
-                pairs.append(
-                    {"file_a": names[i], "file_b": names[j], "similarity": score}
-                )
-    pairs.sort(key=lambda x: x["similarity"], reverse=True)
-    return pairs
+@app.post("/check",status_code=status.HTTP_202_ACCEPTED)
+async def check_plagiarism(req: CheckRequest, background_tasks: BackgroundTasks):
+    """Accept plagiarism check request, return 202, process in background"""
+    webhook_url = os.getenv("WEBHOOK_URL", "http://localhost:3000/api/v1/similarity/webhook")
+    
+    background_tasks.add_task(
+        process_plagiarism,
+        req.assignmentId,
+        req.submissions,
+        webhook_url
+    )
+    
+    return {"status": "accepted"}
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
