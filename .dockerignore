@@ -1,0 +1,64 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Docs
+*.md
+docs/
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Postman
+*.postman_collection.json
+*.postman_environment.json
+
+# Temporary
+tmp/
+temp/
+*.tmp
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
