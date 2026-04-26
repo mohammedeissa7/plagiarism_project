@@ -36,7 +36,7 @@ services:
     networks:
       - sams-net
   fastapi:
-    build: .
+    build: eissa77/plagiarismproject:v1
     ports:
       - "8000:8000"
     environment:
