@@ -41,5 +41,3 @@ jobs:
           push: true
           tags: ${{ env.DOCKER_IMAGE }}:latest
 
-      - name: Image digest
-        run: echo ${{ steps.meta.outputs.tags }}
