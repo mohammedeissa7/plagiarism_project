@@ -9,7 +9,7 @@ on:
       - main
 
 env:
-  DOCKER_IMAGE: eissa77/plagiarism-api
+  DOCKER_IMAGE: eissa77/plagiarismproject
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
