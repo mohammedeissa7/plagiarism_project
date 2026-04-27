@@ -41,6 +41,7 @@ services:
       - "8000:8000"
     environment:
       - WEBHOOK_URL=http://nestjs:3000/api/v1/similarity/webhook
+      - PLAGIARISM_WEBHOOK_SECRET=your_secret_key
     networks:
       - sams-net
     command: uvicorn api:app --host 0.0.0.0 --port 8000

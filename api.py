@@ -117,7 +117,14 @@ async def process_plagiarism(assignment_id: str, submissions: List[Submission], 
     
     # Send webhook
     async with httpx.AsyncClient() as client:
-        await client.post(webhook_url, json=webhook_data.dict())
+        webhook_secret = os.getenv("PLAGIARISM_WEBHOOK_SECRET")
+        await client.post(
+            webhook_url,
+            json=webhook_data.dict(),
+            headers={
+            "x-plagiarism-webhook-secret": webhook_secret
+        }
+            )
 
 
 @app.post("/check",status_code=status.HTTP_202_ACCEPTED)
